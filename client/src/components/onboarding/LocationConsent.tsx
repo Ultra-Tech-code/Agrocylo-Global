@@ -17,6 +17,7 @@ import { locationFormSchema } from "@/lib/validation";
 import { FormInput } from "@/components/forms/FormField";
 import FormErrorSummary from "@/components/forms/FormErrorSummary";
 import { withErrorHandling } from "@/lib/errorHandler";
+import { logger } from "@/lib/logger";
 
 type LocationState =
   | "idle"
@@ -133,7 +134,8 @@ export default function LocationConsent({
         });
       },
       (err) => {
-        setErrorMsg(err.message || "Permission denied or location unavailable");
+        logger.error("Geolocation failed", { error: err.message });
+        setErrorMsg("Permission denied or location unavailable");
         setState("error");
       },
       { enableHighAccuracy: true, timeout: 10_000 },

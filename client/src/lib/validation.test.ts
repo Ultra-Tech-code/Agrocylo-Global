@@ -6,6 +6,8 @@ import {
   searchFilterSchema,
 } from "@/lib/validation";
 
+const VALID_WALLET = `G${"A".repeat(55)}`;
+
 describe("validation schemas", () => {
   it("rejects invalid product payload", () => {
     const result = productFormSchema.safeParse({
@@ -26,7 +28,7 @@ describe("validation schemas", () => {
 
   it("accepts valid order payload", () => {
     const result = orderFormSchema.safeParse({
-      farmer: "GABC1234",
+      farmer: VALID_WALLET,
       amount: 10,
       deliveryDeadline: "2027-01-01T10:00",
       description: "Test order",
@@ -37,7 +39,7 @@ describe("validation schemas", () => {
 
   it("requires collateral amount when collateral is enabled", () => {
     const result = barterOfferSchema.safeParse({
-      recipientWallet: "GABC1234",
+      recipientWallet: VALID_WALLET,
       offerItems: [{ product_name: "Tomato", category: "Vegetables", quantity: "3", unit: "kg" }],
       requestItems: [{ product_name: "Corn", category: "Grains", quantity: "2", unit: "kg" }],
       expiryHours: 24,

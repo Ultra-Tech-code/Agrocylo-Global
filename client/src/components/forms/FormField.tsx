@@ -73,9 +73,14 @@ export function FormTextarea<TFieldValues extends FieldValues>({
         placeholder={placeholder}
         maxLength={maxLength}
         disabled={disabled}
+        aria-describedby={error ? `${id}-error` : undefined}
         {...register(name)}
       />
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && (
+        <p id={`${id}-error`} className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -103,6 +108,7 @@ export function FormSelect<TFieldValues extends FieldValues>({
         id={id}
         className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
         disabled={disabled}
+        aria-describedby={error ? `${id}-error` : undefined}
         {...register(name)}
       >
         {options.map((option) => (
@@ -111,7 +117,11 @@ export function FormSelect<TFieldValues extends FieldValues>({
           </option>
         ))}
       </select>
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && (
+        <p id={`${id}-error`} className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

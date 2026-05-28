@@ -16,7 +16,7 @@ const walletAddressSchema = z
   .string()
   .trim()
   .min(1, "Wallet address is required.")
-  .regex(/^[A-Za-z0-9]{8,}$/, "Invalid wallet address format.");
+  .regex(/^G[A-Z2-7]{55}$/, "Invalid Stellar wallet address.");
 
 export const productFormSchema = z.object({
   name: z.string().trim().min(1, "Product name is required."),

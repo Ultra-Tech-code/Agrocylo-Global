@@ -71,7 +71,10 @@ export class ClientLogger {
 
   log(level: LogLevel, message: string, context?: Record<string, unknown>) {
     const entry: LogEntry = {
-      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      id:
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
       level,
       message,
       context,
