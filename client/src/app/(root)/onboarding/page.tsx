@@ -11,6 +11,7 @@ import SelectRole from "@/components/onboarding/SelectRole";
 import ProfileForm from "@/components/onboarding/ProfileForm";
 import LocationConsent from "@/components/onboarding/LocationConsent";
 import Complete from "@/components/onboarding/Complete";
+import { withErrorHandling } from "@/lib/errorHandler";
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -37,30 +38,47 @@ export default function OnboardingPage() {
     setIsSubmitting(true);
     setError(null);
 
+    const { data: created, error: createError } = await withErrorHandling(
+      () =>
+        createProfile(
+          {
+            role,
+            display_name: displayName.trim(),
+            bio: bio.trim() || undefined,
+          },
+          address,
+        ),
+      { feature: "onboarding", action: "createProfile" },
+    );
+    if (createError || !created) {
+      setError(createError?.message ?? "Something went wrong");
+      setIsSubmitting(false);
+      return;
+    }
+
     try {
-      const created = await createProfile(
-        {
-          role,
-          display_name: displayName.trim(),
-          bio: bio.trim() || undefined,
-        },
-        address
-      );
       // Seed the profile cache so AuthGuard sees the user as onboarded immediately,
       // without waiting for a refetch round-trip.
       setProfile(created);
 
       if (location) {
-        await registerLocation(
-          {
-            latitude: location.latitude,
-            longitude: location.longitude,
-            city: location.city || null,
-            country: location.country || null,
-            is_public: location.isPublic,
-          },
-          address
+        const { error: locationError } = await withErrorHandling(
+          () =>
+            registerLocation(
+              {
+                latitude: location.latitude,
+                longitude: location.longitude,
+                city: location.city || null,
+                country: location.country || null,
+                is_public: location.isPublic,
+              },
+              address,
+            ),
+          { feature: "onboarding", action: "registerLocation" },
         );
+        if (locationError) {
+          throw new Error(locationError.message);
+        }
       }
 
       setStep(5);

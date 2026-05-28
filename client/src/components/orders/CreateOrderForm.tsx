@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { CheckCircle2, Wallet, ShieldCheck } from "lucide-react";
 
@@ -12,17 +12,17 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { useEscrowContract } from "@/hooks/useEscrowContract";
 import { useWallet } from "@/hooks/useWallet";
+import { useAppForm, fieldErrorMessage } from "@/hooks/useAppForm";
+import { orderFormSchema } from "@/lib/validation";
+import { FormInput, FormTextarea } from "@/components/forms/FormField";
+import FormErrorSummary from "@/components/forms/FormErrorSummary";
+import { withErrorHandling } from "@/lib/errorHandler";
 
 const PLATFORM_FEE_PCT = 3;
 
-// XLM SAC contract — required to settle native XLM through escrow. Set
-// NEXT_PUBLIC_NATIVE_TOKEN_CONTRACT_ID in .env.local (testnet XLM SAC).
 const NATIVE_TOKEN_CONTRACT_ID =
   process.env.NEXT_PUBLIC_NATIVE_TOKEN_CONTRACT_ID ?? "";
 
@@ -33,44 +33,77 @@ export default function CreateOrderForm() {
   const { connected } = useWallet();
   const { createOrder, createState } = useEscrowContract();
 
-  const [farmer, setFarmer] = useState(prefilledFarmer);
-  const [amount, setAmount] = useState("");
-  const [deliveryDeadline, setDeliveryDeadline] = useState("");
-  const [description, setDescription] = useState("");
   const [txStep, setTxStep] = useState<"idle" | "signing" | "done" | "error">(
     "idle",
   );
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const numAmount = parseFloat(amount);
-  const hasAmount = numAmount > 0;
-  const hasFarmer = farmer.trim().length > 0;
-  const hasDeadline = deliveryDeadline.length > 0;
-  const isValid = hasFarmer && hasAmount && hasDeadline;
+  const form = useAppForm(orderFormSchema, {
+    defaultValues: {
+      farmer: prefilledFarmer,
+      amount: 0,
+      deliveryDeadline: "",
+      description: "",
+    },
+  });
 
-  const fee = hasAmount ? (numAmount * PLATFORM_FEE_PCT) / 100 : 0;
-  const farmerReceives = hasAmount ? numAmount - fee : 0;
+  const watchedAmount = form.watch("amount");
+  const hasAmount = Number(watchedAmount) > 0;
 
-  async function handleSubmit() {
-    if (!isValid) return;
+  const fee = useMemo(
+    () => (hasAmount ? (Number(watchedAmount) * PLATFORM_FEE_PCT) / 100 : 0),
+    [hasAmount, watchedAmount],
+  );
+  const farmerReceives = useMemo(
+    () => (hasAmount ? Number(watchedAmount) - fee : 0),
+    [fee, hasAmount, watchedAmount],
+  );
+
+  const errorSummary = useMemo(
+    () =>
+      Object.values(form.formState.errors).flatMap((error) =>
+        error?.message ? [String(error.message)] : [],
+      ),
+    [form.formState.errors],
+  );
+
+  async function handleSubmit(values: {
+    farmer: string;
+    amount: number;
+    deliveryDeadline: string;
+    description: string;
+  }) {
     if (!NATIVE_TOKEN_CONTRACT_ID) {
       setTxStep("error");
+      setSubmitError("Native token contract is not configured.");
       return;
     }
-    try {
-      setTxStep("signing");
-      const stroops = BigInt(Math.round(numAmount * 1e7));
-      const result = await createOrder(
-        farmer.trim(),
+
+    setSubmitError(null);
+    setTxStep("signing");
+
+    const { data, error } = await withErrorHandling(async () => {
+      const stroops = BigInt(Math.round(values.amount * 1e7));
+      return createOrder(
+        values.farmer.trim(),
         NATIVE_TOKEN_CONTRACT_ID,
         stroops,
-        deliveryDeadline,
+        values.deliveryDeadline,
       );
-      setTxStep("done");
-      setTxHash(result?.txHash ?? null);
-    } catch {
+    }, {
+      form: "CreateOrderForm",
+      action: "submit",
+    });
+
+    if (error || !data) {
       setTxStep("error");
+      setSubmitError(error?.message ?? "Transaction failed. Please try again.");
+      return;
     }
+
+    setTxStep("done");
+    setTxHash(data?.txHash ?? null);
   }
 
   if (txStep === "done") {
@@ -90,7 +123,7 @@ export default function CreateOrderForm() {
           {txHash && (
             <div className="bg-secondary/50 w-full rounded-xl border p-3 text-left">
               <p className="text-muted-foreground text-xs">Transaction hash</p>
-              <p className="font-mono mt-1 break-all text-xs">{txHash}</p>
+              <p className="mt-1 break-all font-mono text-xs">{txHash}</p>
             </div>
           )}
           <div className="mt-2 flex w-full flex-col gap-2 sm:flex-row">
@@ -101,10 +134,13 @@ export default function CreateOrderForm() {
               variant="outline"
               className="flex-1"
               onClick={() => {
+                form.reset({
+                  farmer: prefilledFarmer,
+                  amount: 0,
+                  deliveryDeadline: "",
+                  description: "",
+                });
                 setTxStep("idle");
-                setAmount("");
-                setDeliveryDeadline("");
-                setDescription("");
                 setTxHash(null);
               }}
             >
@@ -161,82 +197,88 @@ export default function CreateOrderForm() {
           Create Escrow Order
         </CardTitle>
         <p className="text-muted-foreground text-sm">
-          Funds are held in a Soroban escrow until you confirm receipt of
-          goods. If the farmer doesn&apos;t deliver in time, you can refund.
+          Funds are held in a Soroban escrow until you confirm receipt of goods.
+          If the farmer doesn&apos;t deliver in time, you can refund.
         </p>
       </CardHeader>
       <CardContent className="space-y-5">
-        <Input
-          label="Farmer Address"
-          placeholder="G…"
-          value={farmer}
-          onChange={(e) => setFarmer(e.target.value)}
-          spellCheck={false}
-        />
+        <form
+          onSubmit={form.handleSubmit(handleSubmit)}
+          className="space-y-5"
+          noValidate
+        >
+          <FormErrorSummary errors={errorSummary} />
 
-        <Input
-          label="Amount (XLM)"
-          type="number"
-          placeholder="0.00"
-          min="0"
-          step="0.01"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-        />
+          <FormInput
+            name="farmer"
+            label="Farmer Address"
+            placeholder="G…"
+            register={form.register}
+            error={fieldErrorMessage(form.formState.errors, "farmer")}
+          />
 
-        <Input
-          label="Delivery deadline"
-          hint="If the farmer doesn't deliver by this time, you can refund the escrow."
-          type="datetime-local"
-          value={deliveryDeadline}
-          onChange={(e) => setDeliveryDeadline(e.target.value)}
-        />
+          <FormInput
+            name="amount"
+            label="Amount (XLM)"
+            type="number"
+            placeholder="0.00"
+            register={form.register}
+            error={fieldErrorMessage(form.formState.errors, "amount")}
+          />
 
-        <div className="grid w-full gap-1.5">
-          <Label htmlFor="order-description">Description (optional)</Label>
-          <Textarea
-            id="order-description"
+          <FormInput
+            name="deliveryDeadline"
+            label="Delivery deadline"
+            type="datetime-local"
+            hint="If the farmer doesn't deliver by this time, you can refund the escrow."
+            register={form.register}
+            error={fieldErrorMessage(form.formState.errors, "deliveryDeadline")}
+          />
+
+          <FormTextarea
+            name="description"
+            label="Description (optional)"
             rows={2}
             placeholder="e.g. 50kg organic tomatoes"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            register={form.register}
+            error={fieldErrorMessage(form.formState.errors, "description")}
           />
-        </div>
 
-        {hasAmount && (
-          <div className="bg-secondary/40 space-y-2 rounded-2xl border p-4 text-sm">
-            <Row label="You pay" value={`${numAmount.toFixed(2)} XLM`} />
-            <Row
-              label={`Platform fee (${PLATFORM_FEE_PCT}%)`}
-              value={`${fee.toFixed(2)} XLM`}
-              muted
-            />
-            <Separator />
-            <Row
-              label="Farmer receives"
-              value={`${farmerReceives.toFixed(2)} XLM`}
-              bold
-            />
-          </div>
-        )}
+          {hasAmount && (
+            <div className="bg-secondary/40 space-y-2 rounded-2xl border p-4 text-sm">
+              <Row label="You pay" value={`${Number(watchedAmount).toFixed(2)} XLM`} />
+              <Row
+                label={`Platform fee (${PLATFORM_FEE_PCT}%)`}
+                value={`${fee.toFixed(2)} XLM`}
+                muted
+              />
+              <Separator />
+              <Row
+                label="Farmer receives"
+                value={`${farmerReceives.toFixed(2)} XLM`}
+                bold
+              />
+            </div>
+          )}
 
-        {(createState.error || txStep === "error") && (
-          <div className="bg-destructive/10 text-destructive border-destructive/30 rounded-lg border p-3 text-sm">
-            {createState.error ?? "Transaction failed. Please try again."}
-          </div>
-        )}
+          {(createState.error || submitError || txStep === "error") && (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+              {submitError ?? createState.error ?? "Transaction failed. Please try again."}
+            </div>
+          )}
 
-        <Button
-          size="lg"
-          disabled={!isValid}
-          isLoading={createState.isLoading}
-          onClick={handleSubmit}
-          className="w-full"
-        >
-          {txStep === "signing"
-            ? "Sign in wallet…"
-            : "Confirm & Create Escrow Order"}
-        </Button>
+          <Button
+            size="lg"
+            type="submit"
+            disabled={!form.formState.isValid}
+            isLoading={createState.isLoading}
+            className="w-full"
+          >
+            {txStep === "signing"
+              ? "Sign in wallet…"
+              : "Confirm & Create Escrow Order"}
+          </Button>
+        </form>
       </CardContent>
     </Card>
   );

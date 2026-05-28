@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo } from "react";
 import {
   Card,
   CardContent,
@@ -9,9 +9,10 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
+import { useAppForm, fieldErrorMessage } from "@/hooks/useAppForm";
+import { profileFormSchema } from "@/lib/validation";
+import { FormInput, FormTextarea } from "@/components/forms/FormField";
+import FormErrorSummary from "@/components/forms/FormErrorSummary";
 
 interface ProfileFormProps {
   displayName: string;
@@ -30,16 +31,28 @@ export default function ProfileForm({
   onNext,
   onBack,
 }: ProfileFormProps) {
-  const [nameError, setNameError] = useState<string | undefined>();
+  const form = useAppForm(profileFormSchema, {
+    defaultValues: {
+      displayName,
+      bio,
+    },
+  });
 
-  function handleNext() {
-    if (!displayName.trim()) {
-      setNameError("Display name is required");
-      return;
-    }
-    setNameError(undefined);
-    onNext();
-  }
+  useEffect(() => {
+    form.reset({ displayName, bio });
+  }, [displayName, bio, form]);
+
+  const watchedDisplayName = form.watch("displayName");
+  const watchedBio = form.watch("bio");
+
+  useEffect(() => {
+    onUpdate({ displayName: watchedDisplayName, bio: watchedBio });
+  }, [onUpdate, watchedDisplayName, watchedBio]);
+
+  const errorSummary = useMemo(
+    () => Object.values(form.formState.errors).flatMap((error) => (error?.message ? [String(error.message)] : [])),
+    [form.formState.errors],
+  );
 
   return (
     <Card className="mx-auto max-w-md">
@@ -48,42 +61,39 @@ export default function ProfileForm({
         <CardDescription>Tell others about yourself.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        <div className="space-y-4">
-          <Input
+        <form onSubmit={form.handleSubmit(() => onNext())} className="space-y-4">
+          <FormErrorSummary errors={errorSummary} />
+
+          <FormInput
+            name="displayName"
             label="Display Name"
             placeholder="e.g. John's Farm"
-            value={displayName}
-            onChange={(e) => {
-              onUpdate({ displayName: e.target.value, bio });
-              if (nameError) setNameError(undefined);
-            }}
-            error={nameError}
+            register={form.register}
+            error={fieldErrorMessage(form.formState.errors, "displayName")}
           />
 
-          <div className="grid w-full gap-1.5">
-            <Label htmlFor="onboarding-bio">Bio (optional)</Label>
-            <Textarea
-              id="onboarding-bio"
-              placeholder="Organic tomatoes and peppers from Lagos…"
-              rows={3}
-              maxLength={BIO_LIMIT}
-              value={bio}
-              onChange={(e) => onUpdate({ displayName, bio: e.target.value })}
-            />
-            <p className="text-muted-foreground text-right text-xs">
-              {bio.length}/{BIO_LIMIT}
-            </p>
-          </div>
-        </div>
+          <FormTextarea
+            name="bio"
+            label="Bio (optional)"
+            placeholder="Organic tomatoes and peppers from Lagos…"
+            rows={3}
+            maxLength={BIO_LIMIT}
+            register={form.register}
+            error={fieldErrorMessage(form.formState.errors, "bio")}
+          />
+          <p className="text-muted-foreground text-right text-xs">
+            {watchedBio.length}/{BIO_LIMIT}
+          </p>
 
-        <div className="flex gap-3">
-          <Button variant="outline" onClick={onBack} className="flex-1">
-            Back
-          </Button>
-          <Button onClick={handleNext} className="flex-[2]">
-            Continue
-          </Button>
-        </div>
+          <div className="flex gap-3">
+            <Button type="button" variant="outline" onClick={onBack} className="flex-1">
+              Back
+            </Button>
+            <Button type="submit" className="flex-[2]" disabled={!form.formState.isValid}>
+              Continue
+            </Button>
+          </div>
+        </form>
       </CardContent>
     </Card>
   );

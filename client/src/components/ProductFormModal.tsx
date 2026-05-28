@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Upload, X } from "lucide-react";
 
 import {
@@ -12,8 +12,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
@@ -30,22 +28,13 @@ import {
   uploadProductImage,
 } from "@/services/productService";
 import { isTestMode } from "@/lib/testMode";
+import { useAppForm, fieldErrorMessage } from "@/hooks/useAppForm";
+import { productFormSchema } from "@/lib/validation";
+import { FormInput, FormSelect, FormTextarea } from "@/components/forms/FormField";
+import FormErrorSummary from "@/components/forms/FormErrorSummary";
+import { withErrorHandling } from "@/lib/errorHandler";
 
 type Mode = "add" | "edit";
-
-type FormErrors = Partial<
-  Record<
-    | "name"
-    | "category"
-    | "pricePerUnit"
-    | "currency"
-    | "unit"
-    | "description"
-    | "location"
-    | "deliveryWindow",
-    string
-  >
->;
 
 const CATEGORIES: ProductCategory[] = [
   "Vegetables",
@@ -58,9 +47,6 @@ const CATEGORIES: ProductCategory[] = [
 const CURRENCIES: ProductCurrency[] = ["STRK", "USDC"];
 const UNITS: ProductUnit[] = ["kg", "bag", "crate", "piece", "litre", "dozen"];
 const MAX_IMAGES = 8;
-
-const SELECT_CLASSES =
-  "border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-10 w-full rounded-md border px-3 text-sm focus-visible:ring-[3px] focus-visible:outline-none";
 
 interface ProductFormModalProps {
   open: boolean;
@@ -79,39 +65,51 @@ export default function ProductFormModal({
   onClose,
   onSuccess,
 }: ProductFormModalProps) {
-  const [name, setName] = useState("");
-  const [category, setCategory] = useState<ProductCategory | null>(null);
-  const [pricePerUnit, setPricePerUnit] = useState("");
-  const [currency, setCurrency] = useState<ProductCurrency>("STRK");
-  const [unit, setUnit] = useState<ProductUnit>("kg");
-  const [stockQuantity, setStockQuantity] = useState<string>("");
-  const [description, setDescription] = useState<string>("");
-  const [location, setLocation] = useState("");
-  const [deliveryWindow, setDeliveryWindow] = useState("");
-  const [isAvailable, setIsAvailable] = useState(true);
-
   const [imageFiles, setImageFiles] = useState<File[]>([]);
-  const [errors, setErrors] = useState<FormErrors>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Reset form when reopening / switching products
+  const form = useAppForm(productFormSchema, {
+    defaultValues: {
+      name: "",
+      category: "Vegetables",
+      pricePerUnit: 0,
+      currency: "STRK",
+      unit: "kg",
+      stockQuantity: "",
+      description: "",
+      location: "",
+      deliveryWindow: "",
+      isAvailable: true,
+    },
+  });
+
   useEffect(() => {
     if (!open) return;
-    setErrors({});
     setSaveError(null);
-    setName(initialProduct?.name ?? "");
-    setCategory(initialProduct?.category ?? null);
-    setPricePerUnit(initialProduct?.price_per_unit ?? "");
-    setCurrency((initialProduct?.currency as ProductCurrency) ?? "STRK");
-    setUnit((initialProduct?.unit as ProductUnit) ?? "kg");
-    setStockQuantity(initialProduct?.stock_quantity ?? "");
-    setDescription(initialProduct?.description ?? "");
-    setLocation(initialProduct?.location ?? "");
-    setDeliveryWindow(initialProduct?.delivery_window ?? "");
-    setIsAvailable(initialProduct?.is_available ?? true);
     setImageFiles([]);
-  }, [open, initialProduct]);
+
+    form.reset({
+      name: initialProduct?.name ?? "",
+      category: (initialProduct?.category as ProductCategory) ?? "Vegetables",
+      pricePerUnit: Number(initialProduct?.price_per_unit ?? 0),
+      currency: (initialProduct?.currency as ProductCurrency) ?? "STRK",
+      unit: (initialProduct?.unit as ProductUnit) ?? "kg",
+      stockQuantity: initialProduct?.stock_quantity ?? "",
+      description: initialProduct?.description ?? "",
+      location: initialProduct?.location ?? "",
+      deliveryWindow: initialProduct?.delivery_window ?? "",
+      isAvailable: initialProduct?.is_available ?? true,
+    });
+  }, [open, initialProduct, form]);
+
+  const errorSummary = useMemo(
+    () =>
+      Object.values(form.formState.errors).flatMap((error) =>
+        error?.message ? [String(error.message)] : [],
+      ),
+    [form.formState.errors],
+  );
 
   function handleFileChange(files: FileList | null) {
     if (!files) return;
@@ -123,42 +121,37 @@ export default function ProductFormModal({
     setImageFiles((prev) => [...prev, ...next]);
   }
 
-  function validate(): boolean {
-    const next: FormErrors = {};
-    if (!name.trim()) next.name = "Product name is required.";
-    if (!category) next.category = "Select a category.";
-    if (!pricePerUnit || Number(pricePerUnit) <= 0)
-      next.pricePerUnit = "Invalid price.";
-    // In test mode location and deliveryWindow are optional
-    if (!isTestMode()) {
-      if (!location.trim()) next.location = "Location is required.";
-      if (!deliveryWindow.trim())
-        next.deliveryWindow = "Delivery window is required.";
-    }
-    setErrors(next);
-    return Object.keys(next).length === 0;
-  }
-
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!validate()) return;
+  async function submit(values: {
+    name: string;
+    category: ProductCategory;
+    pricePerUnit: number;
+    currency: ProductCurrency;
+    unit: ProductUnit;
+    stockQuantity?: string;
+    description?: string;
+    location: string;
+    deliveryWindow: string;
+    isAvailable: boolean;
+  }) {
     setSaving(true);
     setSaveError(null);
-    try {
-      const payload = normalizeProductWriteInput({
-        name: name.trim(),
-        category,
-        pricePerUnit,
-        currency,
-        unit,
-        stockQuantity,
-        description,
-        isAvailable,
-        location,
-        deliveryWindow,
-      });
 
-      const product =
+    const payload = normalizeProductWriteInput({
+      name: values.name.trim(),
+      category: values.category,
+      pricePerUnit: String(values.pricePerUnit),
+      currency: values.currency,
+      unit: values.unit,
+      stockQuantity: values.stockQuantity?.trim() || null,
+      description: values.description?.trim() || null,
+      isAvailable: values.isAvailable,
+      location: isTestMode() ? values.location.trim() || "Test Location" : values.location.trim(),
+      deliveryWindow:
+        isTestMode() ? values.deliveryWindow.trim() || "Test Window" : values.deliveryWindow.trim(),
+    });
+
+    const { data: product, error } = await withErrorHandling(async () => {
+      const savedProduct =
         mode === "add"
           ? await createProduct(walletAddress, payload)
           : await updateProduct(walletAddress, initialProduct!.id, payload);
@@ -166,18 +159,27 @@ export default function ProductFormModal({
       if (imageFiles.length > 0) {
         await Promise.all(
           imageFiles.map((file) =>
-            uploadProductImage(walletAddress, product.id, file),
+            uploadProductImage(walletAddress, savedProduct.id, file),
           ),
         );
       }
 
-      await onSuccess();
-      onClose();
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Failed to save.");
-    } finally {
+      return savedProduct;
+    }, {
+      form: "ProductFormModal",
+      action: mode,
+      walletAddress,
+    });
+
+    if (!product || error) {
+      setSaveError(error?.message ?? "Failed to save.");
       setSaving(false);
+      return;
     }
+
+    await onSuccess();
+    onClose();
+    setSaving(false);
   }
 
   return (
@@ -188,99 +190,71 @@ export default function ProductFormModal({
             {mode === "add" ? "Add Product" : "Edit Listing"}
           </DialogTitle>
           <DialogDescription>
-            Listings on AgroCylo can be priced in STRK or USDC and are
-            settled by the Soroban escrow when a buyer confirms receipt.
+            Listings on AgroCylo can be priced in STRK or USDC and are settled by
+            the Soroban escrow when a buyer confirms receipt.
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={onSubmit} className="space-y-6">
-          {/* Basic info */}
+        <form onSubmit={form.handleSubmit(submit)} className="space-y-6" noValidate>
+          <FormErrorSummary errors={errorSummary} />
+
           <div className="grid gap-4 sm:grid-cols-2">
-            <Input
+            <FormInput
+              name="name"
               label="Product Name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              error={errors.name}
-              required
+              register={form.register}
+              error={fieldErrorMessage(form.formState.errors, "name")}
             />
-            <div className="grid gap-1.5">
-              <Label>Category</Label>
-              <select
-                className={SELECT_CLASSES}
-                value={category ?? ""}
-                onChange={(e) =>
-                  setCategory((e.target.value || null) as ProductCategory)
-                }
-              >
-                <option value="" disabled>
-                  Select category
-                </option>
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-              {errors.category && (
-                <p className="text-destructive text-xs">{errors.category}</p>
-              )}
-            </div>
+            <FormSelect
+              name="category"
+              label="Category"
+              register={form.register}
+              error={fieldErrorMessage(form.formState.errors, "category")}
+              options={CATEGORIES.map((category) => ({
+                label: category,
+                value: category,
+              }))}
+            />
           </div>
 
-          {/* Pricing & units */}
           <div className="grid gap-4 sm:grid-cols-3">
-            <Input
+            <FormInput
+              name="pricePerUnit"
               label="Price"
               type="number"
-              min={0}
-              step={0.01}
-              value={pricePerUnit}
-              onChange={(e) => setPricePerUnit(e.target.value)}
-              error={errors.pricePerUnit}
-              required
+              register={form.register}
+              error={fieldErrorMessage(form.formState.errors, "pricePerUnit")}
             />
-            <div className="grid gap-1.5">
-              <Label>Currency</Label>
-              <select
-                className={SELECT_CLASSES}
-                value={currency}
-                onChange={(e) =>
-                  setCurrency(e.target.value as ProductCurrency)
-                }
-              >
-                {CURRENCIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Unit</Label>
-              <select
-                className={SELECT_CLASSES}
-                value={unit}
-                onChange={(e) => setUnit(e.target.value as ProductUnit)}
-              >
-                {UNITS.map((u) => (
-                  <option key={u} value={u}>
-                    {u}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <FormSelect
+              name="currency"
+              label="Currency"
+              register={form.register}
+              error={fieldErrorMessage(form.formState.errors, "currency")}
+              options={CURRENCIES.map((currency) => ({
+                label: currency,
+                value: currency,
+              }))}
+            />
+            <FormSelect
+              name="unit"
+              label="Unit"
+              register={form.register}
+              error={fieldErrorMessage(form.formState.errors, "unit")}
+              options={UNITS.map((unit) => ({
+                label: unit,
+                value: unit,
+              }))}
+            />
           </div>
 
-          {/* Stock + availability */}
           <div className="grid gap-4 sm:grid-cols-[2fr_1fr] sm:items-end">
-            <Input
+            <FormInput
+              name="stockQuantity"
               label="Stock quantity"
               hint="Leave blank for unlimited."
               type="number"
-              min={0}
-              step={1}
-              value={stockQuantity}
-              onChange={(e) => setStockQuantity(e.target.value)}
+              register={form.register}
+              error={fieldErrorMessage(form.formState.errors, "stockQuantity")}
             />
             <div className="bg-secondary/40 flex h-12 items-center justify-between gap-3 rounded-md border px-4">
               <Label htmlFor="prod-available" className="cursor-pointer">
@@ -288,47 +262,40 @@ export default function ProductFormModal({
               </Label>
               <Switch
                 id="prod-available"
-                checked={isAvailable}
-                onCheckedChange={setIsAvailable}
+                checked={form.watch("isAvailable")}
+                onCheckedChange={(value) =>
+                  form.setValue("isAvailable", value, { shouldValidate: true })
+                }
               />
             </div>
           </div>
 
-          {/* Logistics */}
           <div className="grid gap-4 sm:grid-cols-2">
-            <Input
+            <FormInput
+              name="location"
               label="Farm Location (Region)"
               placeholder="e.g. Kumasi, Ghana"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              error={errors.location}
-              required
+              register={form.register}
+              error={fieldErrorMessage(form.formState.errors, "location")}
             />
-            <Input
+            <FormInput
+              name="deliveryWindow"
               label="Delivery Window"
               placeholder="e.g. 2-3 days"
-              value={deliveryWindow}
-              onChange={(e) => setDeliveryWindow(e.target.value)}
-              error={errors.deliveryWindow}
-              required
+              register={form.register}
+              error={fieldErrorMessage(form.formState.errors, "deliveryWindow")}
             />
           </div>
 
-          {/* Description */}
-          <div className="grid gap-1.5">
-            <Label htmlFor="prod-description">
-              Description &amp; Health Benefits
-            </Label>
-            <Textarea
-              id="prod-description"
-              rows={4}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Tell buyers about origin, organic status, or health benefits..."
-            />
-          </div>
+          <FormTextarea
+            name="description"
+            label="Description & Health Benefits"
+            rows={4}
+            register={form.register}
+            placeholder="Tell buyers about origin, organic status, or health benefits..."
+            error={fieldErrorMessage(form.formState.errors, "description")}
+          />
 
-          {/* Images */}
           <div className="grid gap-2">
             <Label>Product images</Label>
             <p className="text-muted-foreground text-xs">
@@ -357,21 +324,21 @@ export default function ProductFormModal({
 
             {imageFiles.length > 0 && (
               <div className="flex flex-wrap gap-2 pt-1">
-                {imageFiles.map((f, i) => (
+                {imageFiles.map((file, index) => (
                   <span
-                    key={i}
+                    key={`${file.name}-${index}`}
                     className="bg-secondary inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs"
                   >
-                    {f.name}
+                    {file.name}
                     <button
                       type="button"
                       className="text-muted-foreground hover:text-foreground"
                       onClick={() =>
                         setImageFiles((prev) =>
-                          prev.filter((_, idx) => idx !== i),
+                          prev.filter((_, idx) => idx !== index),
                         )
                       }
-                      aria-label={`Remove ${f.name}`}
+                      aria-label={`Remove ${file.name}`}
                     >
                       <X className="size-3" />
                     </button>
@@ -382,7 +349,7 @@ export default function ProductFormModal({
           </div>
 
           {saveError && (
-            <div className="bg-destructive/10 text-destructive border-destructive/30 rounded-lg border p-3 text-sm">
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
               {saveError}
             </div>
           )}
@@ -398,7 +365,11 @@ export default function ProductFormModal({
             >
               Cancel
             </Button>
-            <Button type="submit" isLoading={saving} disabled={saving}>
+            <Button
+              type="submit"
+              isLoading={saving}
+              disabled={saving || !form.formState.isValid}
+            >
               {mode === "add" ? "List Product" : "Update Listing"}
             </Button>
           </DialogFooter>

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ArrowLeftRight, Plus, Trash2 } from "lucide-react";
+import { useFieldArray } from "react-hook-form";
 
 import {
   Dialog,
@@ -12,9 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import type {
@@ -23,6 +22,11 @@ import type {
   ProductUnit,
 } from "@/types/product";
 import type { BarterOfferItem } from "@/types/barter";
+import { useAppForm, fieldErrorMessage } from "@/hooks/useAppForm";
+import { barterOfferSchema, type BarterOfferFormValues } from "@/lib/validation";
+import { FormInput, FormSelect, FormTextarea } from "@/components/forms/FormField";
+import FormErrorSummary from "@/components/forms/FormErrorSummary";
+import { withErrorHandling } from "@/lib/errorHandler";
 
 const CATEGORIES: ProductCategory[] = [
   "Vegetables",
@@ -42,13 +46,6 @@ const EXPIRY_OPTIONS = [
   { label: "7 days", value: 168 },
 ];
 
-type FormErrors = Partial<
-  Record<
-    "recipientWallet" | "offerItems" | "requestItems" | "collateral" | "notes",
-    string
-  >
->;
-
 function emptyItem(): BarterOfferItem {
   return {
     product_name: "",
@@ -58,140 +55,102 @@ function emptyItem(): BarterOfferItem {
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-
-function ItemFieldset({
-  label,
+function BarterItemSection({
+  title,
   accent,
-  items,
-  onChange,
-  error,
+  prefix,
+  register,
+  fields,
+  remove,
+  append,
+  errors,
 }: {
-  label: string;
+  title: string;
   accent: "primary" | "amber";
-  items: BarterOfferItem[];
-  onChange: (items: BarterOfferItem[]) => void;
-  error?: string;
+  prefix: "offerItems" | "requestItems";
+  register: ReturnType<typeof useAppForm<typeof barterOfferSchema>>["register"];
+  fields: Array<{ id: string }>;
+  remove: (index: number) => void;
+  append: (value: BarterOfferItem) => void;
+  errors?: string;
 }) {
-  function update(idx: number, patch: Partial<BarterOfferItem>) {
-    onChange(items.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
-  }
-  function remove(idx: number) {
-    onChange(items.filter((_, i) => i !== idx));
-  }
-
   const borderClass =
     accent === "primary" ? "border-l-primary" : "border-l-amber-500";
 
   return (
-    <div className={`border-l-4 ${borderClass} space-y-3 pl-4`}>
+    <div className={`space-y-3 border-l-4 ${borderClass} pl-4`}>
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">{label}</h3>
+        <h3 className="text-sm font-semibold">{title}</h3>
         <Button
           type="button"
           variant="outline"
           size="sm"
-          onClick={() => onChange([...items, emptyItem()])}
+          onClick={() => append(emptyItem())}
         >
           <Plus className="size-3.5" />
           Add item
         </Button>
       </div>
 
-      {items.length === 0 ? (
-        <div className="border-border bg-secondary/30 text-muted-foreground rounded-xl border border-dashed p-4 text-center text-xs">
-          No items yet — click &quot;Add item&quot; to start.
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {items.map((item, idx) => (
-            <div
-              key={idx}
-              className="bg-secondary/30 space-y-3 rounded-xl border p-3"
-            >
-              <div className="flex items-center justify-between">
-                <p className="text-muted-foreground text-xs font-medium">
-                  Item {idx + 1}
-                </p>
-                {items.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => remove(idx)}
-                    className="text-destructive hover:text-destructive/80 inline-flex items-center gap-1 text-xs"
-                  >
-                    <Trash2 className="size-3" />
-                    Remove
-                  </button>
-                )}
-              </div>
+      <div className="space-y-3">
+        {fields.map((field, index) => (
+          <div key={field.id} className="bg-secondary/30 space-y-3 rounded-xl border p-3">
+            <div className="flex items-center justify-between">
+              <p className="text-muted-foreground text-xs font-medium">Item {index + 1}</p>
+              {fields.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => remove(index)}
+                  className="text-destructive inline-flex items-center gap-1 text-xs hover:text-destructive/80"
+                >
+                  <Trash2 className="size-3" />
+                  Remove
+                </button>
+              )}
+            </div>
 
-              <Input
-                label="Product name"
-                value={item.product_name}
-                onChange={(e) => update(idx, { product_name: e.target.value })}
-                placeholder="e.g. Organic Tomatoes"
-                required
+            <FormInput
+              name={`${prefix}.${index}.product_name`}
+              label="Product name"
+              register={register}
+            />
+
+            <div className="grid grid-cols-3 gap-3">
+              <FormSelect
+                name={`${prefix}.${index}.category`}
+                label="Category"
+                register={register}
+                options={CATEGORIES.map((category) => ({
+                  label: category,
+                  value: category,
+                }))}
               />
 
-              <div className="grid grid-cols-3 gap-3">
-                <div className="grid gap-1.5">
-                  <Label className="text-xs">Category</Label>
-                  <select
-                    className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-10 w-full rounded-md border px-3 text-sm focus-visible:ring-[3px] focus-visible:outline-none"
-                    value={item.category}
-                    onChange={(e) =>
-                      update(idx, {
-                        category: e.target.value as ProductCategory,
-                      })
-                    }
-                  >
-                    {CATEGORIES.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              <FormInput
+                name={`${prefix}.${index}.quantity`}
+                label="Quantity"
+                type="number"
+                register={register}
+              />
 
-                <Input
-                  label="Quantity"
-                  type="number"
-                  min={0}
-                  step={0.1}
-                  value={item.quantity}
-                  onChange={(e) => update(idx, { quantity: e.target.value })}
-                  placeholder="50"
-                  required
-                />
-
-                <div className="grid gap-1.5">
-                  <Label className="text-xs">Unit</Label>
-                  <select
-                    className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-10 w-full rounded-md border px-3 text-sm focus-visible:ring-[3px] focus-visible:outline-none"
-                    value={item.unit}
-                    onChange={(e) =>
-                      update(idx, { unit: e.target.value as ProductUnit })
-                    }
-                  >
-                    {UNITS.map((u) => (
-                      <option key={u} value={u}>
-                        {u}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+              <FormSelect
+                name={`${prefix}.${index}.unit`}
+                label="Unit"
+                register={register}
+                options={UNITS.map((unit) => ({
+                  label: unit,
+                  value: unit,
+                }))}
+              />
             </div>
-          ))}
-        </div>
-      )}
+          </div>
+        ))}
+      </div>
 
-      {error && <p className="text-destructive text-xs">{error}</p>}
+      {errors && <p className="text-xs text-destructive">{errors}</p>}
     </div>
   );
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface BarterOfferFormProps {
   open: boolean;
@@ -206,114 +165,108 @@ export default function BarterOfferForm({
   onClose,
   onSuccess,
 }: BarterOfferFormProps) {
-  const [recipientWallet, setRecipientWallet] = useState("");
-  const [offerItems, setOfferItems] = useState<BarterOfferItem[]>([
-    emptyItem(),
-  ]);
-  const [requestItems, setRequestItems] = useState<BarterOfferItem[]>([
-    emptyItem(),
-  ]);
-  const [expiryHours, setExpiryHours] = useState(24);
-  const [includeCollateral, setIncludeCollateral] = useState(false);
-  const [collateralAmount, setCollateralAmount] = useState("");
-  const [collateralCurrency, setCollateralCurrency] =
-    useState<ProductCurrency>("STRK");
-  const [notes, setNotes] = useState("");
-  const [errors, setErrors] = useState<FormErrors>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  function validate(): boolean {
-    const next: FormErrors = {};
+  const form = useAppForm(barterOfferSchema, {
+    defaultValues: {
+      recipientWallet: "",
+      offerItems: [emptyItem()],
+      requestItems: [emptyItem()],
+      expiryHours: 24,
+      includeCollateral: false,
+      collateralAmount: "",
+      collateralCurrency: "STRK",
+      notes: "",
+    },
+  });
 
-    if (!recipientWallet.trim()) {
-      next.recipientWallet = "Recipient wallet address is required.";
-    } else if (recipientWallet.trim() === walletAddress) {
-      next.recipientWallet = "You cannot barter with yourself.";
-    }
+  const {
+    fields: offerFields,
+    append: appendOffer,
+    remove: removeOffer,
+  } = useFieldArray({
+    control: form.control,
+    name: "offerItems",
+  });
 
-    if (offerItems.length === 0) {
-      next.offerItems = "Add at least one item you are offering.";
-    } else if (
-      offerItems.some(
-        (i) =>
-          !i.product_name.trim() || !i.quantity || Number(i.quantity) <= 0,
-      )
-    ) {
-      next.offerItems =
-        "All offer items must have a name and positive quantity.";
-    }
+  const {
+    fields: requestFields,
+    append: appendRequest,
+    remove: removeRequest,
+  } = useFieldArray({
+    control: form.control,
+    name: "requestItems",
+  });
 
-    if (requestItems.length === 0) {
-      next.requestItems = "Add at least one item you want to receive.";
-    } else if (
-      requestItems.some(
-        (i) =>
-          !i.product_name.trim() || !i.quantity || Number(i.quantity) <= 0,
-      )
-    ) {
-      next.requestItems =
-        "All request items must have a name and positive quantity.";
-    }
+  const includeCollateral = form.watch("includeCollateral");
+  const notesLength = form.watch("notes").length;
 
-    if (includeCollateral) {
-      if (!collateralAmount || Number(collateralAmount) <= 0) {
-        next.collateral = "Collateral amount must be a positive number.";
-      }
-    }
+  const errorSummary = useMemo(
+    () =>
+      Object.values(form.formState.errors).flatMap((error) => {
+        if (!error) return [];
+        if (typeof error.message === "string") return [error.message];
+        return [];
+      }),
+    [form.formState.errors],
+  );
 
-    if (notes.length > 500) {
-      next.notes = "Notes must be 500 characters or less.";
-    }
-
-    setErrors(next);
-    return Object.keys(next).length === 0;
-  }
-
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function submit(values: BarterOfferFormValues) {
     if (!walletAddress) {
       setSaveError("Wallet is not connected.");
       return;
     }
-    if (!validate()) return;
+
+    if (values.recipientWallet.trim() === walletAddress) {
+      setSaveError("You cannot barter with yourself.");
+      return;
+    }
 
     setSaving(true);
     setSaveError(null);
 
-    try {
-      // TODO: when /barter is exposed on the backend, replace the simulated
-      // delay with a real createBarterOffer(walletAddress, payload) call.
-      const _payload = {
+    const { error } = await withErrorHandling(async () => {
+      const payload = {
         proposer_wallet: walletAddress,
-        recipient_wallet: recipientWallet.trim(),
-        offer_items: offerItems.map((i) => ({
-          ...i,
-          product_name: i.product_name.trim(),
-          quantity: i.quantity.trim(),
+        recipient_wallet: values.recipientWallet.trim(),
+        offer_items: values.offerItems.map((item) => ({
+          ...item,
+          product_name: item.product_name.trim(),
+          quantity: item.quantity.trim(),
         })),
-        request_items: requestItems.map((i) => ({
-          ...i,
-          product_name: i.product_name.trim(),
-          quantity: i.quantity.trim(),
+        request_items: values.requestItems.map((item) => ({
+          ...item,
+          product_name: item.product_name.trim(),
+          quantity: item.quantity.trim(),
         })),
-        expiry_hours: expiryHours,
-        collateral_amount: includeCollateral ? collateralAmount.trim() : null,
-        collateral_currency: includeCollateral ? collateralCurrency : null,
-        notes: notes.trim() || null,
+        expiry_hours: values.expiryHours,
+        collateral_amount:
+          values.includeCollateral && values.collateralAmount
+            ? values.collateralAmount.trim()
+            : null,
+        collateral_currency: values.includeCollateral
+          ? values.collateralCurrency
+          : null,
+        notes: values.notes.trim() || null,
       };
-      void _payload;
 
-      await new Promise((r) => setTimeout(r, 500));
-      await onSuccess();
-      onClose();
-    } catch (err) {
-      setSaveError(
-        err instanceof Error ? err.message : "Failed to submit barter offer.",
-      );
-    } finally {
+      void payload;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }, {
+      form: "BarterOfferForm",
+      action: "submit",
+    });
+
+    if (error) {
+      setSaveError(error.message);
       setSaving(false);
+      return;
     }
+
+    await onSuccess();
+    onClose();
+    setSaving(false);
   }
 
   return (
@@ -330,116 +283,101 @@ export default function BarterOfferForm({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={onSubmit} className="space-y-6">
-          <Input
+        <form onSubmit={form.handleSubmit(submit)} className="space-y-6" noValidate>
+          <FormErrorSummary errors={errorSummary} />
+
+          <FormInput
+            name="recipientWallet"
             label="Recipient Wallet Address"
-            value={recipientWallet}
-            onChange={(e) => setRecipientWallet(e.target.value)}
             placeholder="G… or wallet address of the other party"
-            error={errors.recipientWallet}
-            required
+            register={form.register}
+            error={fieldErrorMessage(form.formState.errors, "recipientWallet")}
           />
 
-          <ItemFieldset
-            label="You give"
+          <BarterItemSection
+            title="You give"
             accent="primary"
-            items={offerItems}
-            onChange={setOfferItems}
-            error={errors.offerItems}
+            prefix="offerItems"
+            register={form.register}
+            fields={offerFields}
+            remove={removeOffer}
+            append={appendOffer}
+            errors={form.formState.errors.offerItems?.message}
           />
 
-          <ItemFieldset
-            label="You receive"
+          <BarterItemSection
+            title="You receive"
             accent="amber"
-            items={requestItems}
-            onChange={setRequestItems}
-            error={errors.requestItems}
+            prefix="requestItems"
+            register={form.register}
+            fields={requestFields}
+            remove={removeRequest}
+            append={appendRequest}
+            errors={form.formState.errors.requestItems?.message}
           />
 
-          <div className="grid gap-1.5">
-            <Label>Offer expires in</Label>
-            <select
-              className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-10 w-full rounded-md border px-3 text-sm focus-visible:ring-[3px] focus-visible:outline-none"
-              value={expiryHours}
-              onChange={(e) => setExpiryHours(Number(e.target.value))}
-            >
-              {EXPIRY_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          <FormSelect
+            name="expiryHours"
+            label="Offer expires in"
+            register={form.register}
+            error={fieldErrorMessage(form.formState.errors, "expiryHours")}
+            options={EXPIRY_OPTIONS.map((option) => ({
+              label: option.label,
+              value: String(option.value),
+            }))}
+          />
 
           <div className="space-y-3">
             <div className="flex items-center gap-3">
               <Checkbox
                 id="include-collateral"
                 checked={includeCollateral}
-                onCheckedChange={(v) => setIncludeCollateral(Boolean(v))}
+                onCheckedChange={(value) =>
+                  form.setValue("includeCollateral", Boolean(value), {
+                    shouldValidate: true,
+                  })
+                }
               />
-              <Label
-                htmlFor="include-collateral"
-                className="text-sm font-medium"
-              >
+              <Label htmlFor="include-collateral" className="text-sm font-medium">
                 Include collateral (if agreed)
               </Label>
             </div>
 
             {includeCollateral && (
               <div className="grid grid-cols-2 gap-3 pl-7">
-                <Input
+                <FormInput
+                  name="collateralAmount"
                   label="Collateral amount"
                   type="number"
-                  min={0}
-                  step={0.01}
-                  value={collateralAmount}
-                  onChange={(e) => setCollateralAmount(e.target.value)}
-                  placeholder="100"
-                  error={errors.collateral}
+                  register={form.register}
+                  error={fieldErrorMessage(form.formState.errors, "collateralAmount")}
                 />
-                <div className="grid gap-1.5">
-                  <Label className="text-xs">Currency</Label>
-                  <select
-                    className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-10 w-full rounded-md border px-3 text-sm focus-visible:ring-[3px] focus-visible:outline-none"
-                    value={collateralCurrency}
-                    onChange={(e) =>
-                      setCollateralCurrency(
-                        e.target.value as ProductCurrency,
-                      )
-                    }
-                  >
-                    {CURRENCIES.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <FormSelect
+                  name="collateralCurrency"
+                  label="Currency"
+                  register={form.register}
+                  options={CURRENCIES.map((currency) => ({
+                    label: currency,
+                    value: currency,
+                  }))}
+                />
               </div>
             )}
           </div>
 
-          <div className="grid gap-1.5">
-            <Label htmlFor="barter-notes">Notes (optional, max 500)</Label>
-            <Textarea
-              id="barter-notes"
-              rows={3}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Any additional details about this trade…"
-              maxLength={500}
-            />
-            {errors.notes && (
-              <p className="text-destructive text-xs">{errors.notes}</p>
-            )}
-            <p className="text-muted-foreground text-right text-xs">
-              {notes.length}/500
-            </p>
-          </div>
+          <FormTextarea
+            name="notes"
+            label="Notes (optional, max 500)"
+            rows={3}
+            maxLength={500}
+            register={form.register}
+            placeholder="Any additional details about this trade…"
+            error={fieldErrorMessage(form.formState.errors, "notes")}
+          />
+          <p className="text-muted-foreground text-right text-xs">{notesLength}/500</p>
 
           {saveError && (
-            <div className="bg-destructive/10 text-destructive border-destructive/30 rounded-lg border p-3 text-sm">
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
               {saveError}
             </div>
           )}
@@ -455,7 +393,11 @@ export default function BarterOfferForm({
             >
               Cancel
             </Button>
-            <Button type="submit" isLoading={saving} disabled={saving}>
+            <Button
+              type="submit"
+              isLoading={saving}
+              disabled={saving || !form.formState.isValid}
+            >
               Submit Offer
             </Button>
           </DialogFooter>

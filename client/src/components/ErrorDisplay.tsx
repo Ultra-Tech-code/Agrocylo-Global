@@ -1,7 +1,8 @@
 'use client';
 
 import { ReactNode } from 'react';
-import {  mapBlockchainError } from './errorHandler';
+import Link from 'next/link';
+import { mapBlockchainError } from './errorHandler';
 
 export interface ErrorDisplayProps {
   error: unknown;
@@ -22,9 +23,16 @@ export function ErrorDisplay({ error, details, children }: ErrorDisplayProps) {
 
       {mapped.action && (
         <p className="mb-3 font-semibold">
-          Action: {mapped.action}
+          Recovery: {mapped.action}
         </p>
       )}
+
+      <p className="mb-3 text-xs">
+        Need help?{' '}
+        <Link href={mapped.docsUrl} className="underline">
+          Read documentation
+        </Link>
+      </p>
 
       {details && (
         <pre className="m-0 whitespace-pre-wrap text-xs bg-red-100 p-2 rounded">

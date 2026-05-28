@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Search } from "lucide-react";
 
 import { RefreshCw, WifiOff } from "lucide-react";
@@ -17,6 +17,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { siteConfig } from "@/config/site.config";
 import type { ProductCategory } from "@/types/product";
+import { useAppForm } from "@/hooks/useAppForm";
+import { searchFilterSchema } from "@/lib/validation";
 
 function isNetworkError(error: unknown): boolean {
   if (error instanceof TypeError) return true;
@@ -37,16 +39,20 @@ const CATEGORIES: Array<ProductCategory | "All"> = [
 export default function MarketPage() {
   const { connected } = useWallet();
   const { cart, setQuantityForProduct } = useCart();
-  const [category, setCategory] = useState<ProductCategory | "All">("All");
-  const [search, setSearch] = useState("");
+  const form = useAppForm(searchFilterSchema, {
+    defaultValues: {
+      category: "All",
+      search: "",
+    },
+  });
+  const category = form.watch("category");
+  const search = form.watch("search");
 
   const { data, isLoading, error, refetch, isFetching } = useProducts({
     pageSize: 50,
     category: category === "All" ? undefined : category,
     includeUnavailable: false,
   });
-  const products = data?.items ?? [];
-
   const quantityByProductId = useMemo(() => {
     const map = new Map<string, number>();
     for (const g of cart.groups) {
@@ -58,10 +64,11 @@ export default function MarketPage() {
   }, [cart.groups]);
 
   const filtered = useMemo(() => {
+    const products = data?.items ?? [];
     const q = search.trim().toLowerCase();
     if (!q) return products;
     return products.filter((p) => p.name.toLowerCase().includes(q));
-  }, [products, search]);
+  }, [data?.items, search]);
 
   return (
     <div className="flex flex-col">
@@ -100,16 +107,27 @@ export default function MarketPage() {
             <Search className="text-muted-foreground absolute left-3 top-1/2 size-4 -translate-y-1/2" />
             <Input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) =>
+                form.setValue("search", e.target.value, { shouldValidate: true })
+              }
               placeholder="Search by product name…"
               className="pl-10"
             />
+            {form.formState.errors.search?.message && (
+              <p className="mt-1 text-xs text-destructive">
+                {form.formState.errors.search.message}
+              </p>
+            )}
           </div>
           <div className="flex gap-2 overflow-x-auto md:flex-wrap">
             {CATEGORIES.map((c) => (
               <button
                 key={c}
-                onClick={() => setCategory(c)}
+                onClick={() =>
+                  form.setValue("category", c as ProductCategory | "All", {
+                    shouldValidate: true,
+                  })
+                }
                 className="cursor-pointer"
               >
                 <Badge

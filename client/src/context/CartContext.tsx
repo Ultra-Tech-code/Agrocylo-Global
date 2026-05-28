@@ -1,9 +1,24 @@
 "use client";
 
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useWallet } from "@/hooks/useWallet";
 import type { CartState } from "@/types/cart";
-import { getActiveCart, addItemToCart, updateCartItemQuantity, removeCartItem, clearCart } from "@/services/cartService";
+import { useContextDebug } from "@/hooks/useContextDebug";
+import {
+  getActiveCart,
+  addItemToCart,
+  updateCartItemQuantity,
+  removeCartItem,
+  clearCart,
+} from "@/services/cartService";
 
 type CartContextType = {
   cart: CartState;
@@ -21,7 +36,23 @@ type CartContextType = {
   clearCart: () => Promise<void>;
 };
 
+type CartStateSlice = Pick<
+  CartContextType,
+  "cart" | "cartLoading" | "cartError" | "drawerOpen" | "itemCount"
+>;
+
+type CartActionsSlice = Pick<
+  CartContextType,
+  | "setDrawerOpen"
+  | "refreshCart"
+  | "setQuantityForProduct"
+  | "removeCartItem"
+  | "clearCart"
+>;
+
 const CartContext = createContext<CartContextType | null>(null);
+const CartStateContext = createContext<CartStateSlice | null>(null);
+const CartActionsContext = createContext<CartActionsSlice | null>(null);
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const { address, connected } = useWallet();
@@ -34,10 +65,23 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   const itemCount = useMemo(() => {
-    return cart.groups.reduce((acc, g) => {
-      return acc + g.items.reduce((a, it) => a + Number(it.quantity), 0);
+    return cart.groups.reduce((acc, group) => {
+      return acc + group.items.reduce((sum, item) => sum + Number(item.quantity), 0);
     }, 0);
-  }, [cart]);
+  }, [cart.groups]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const persisted = localStorage.getItem("cart.drawer.open");
+    if (persisted != null) {
+      setDrawerOpen(persisted === "1");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("cart.drawer.open", drawerOpen ? "1" : "0");
+  }, [drawerOpen]);
 
   const refreshCart = useCallback(async () => {
     if (!address || !connected) return;
@@ -60,9 +104,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const findItemByProductId = useCallback(
     (productId: string) => {
-      for (const g of cart.groups) {
-        const it = g.items.find((x) => x.product_id === productId);
-        if (it) return { itemId: it.id, quantity: Number(it.quantity), group: g };
+      for (const group of cart.groups) {
+        const item = group.items.find((entry) => entry.product_id === productId);
+        if (item) return { itemId: item.id, quantity: Number(item.quantity) };
       }
       return null;
     },
@@ -72,26 +116,25 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const setQuantityForProduct = useCallback(
     (productId: string, quantity: number) => {
       if (!address || !connected) return;
+
       const nextQty = Math.max(0, Math.floor(quantity));
       if (nextQty === 0) {
         const existing = findItemByProductId(productId);
-        if (existing) {
-          const { itemId } = existing;
-          // Immediate delete (no debounce) to match expected UI behavior.
-          void (async () => {
-            try {
-              if (timersRef.current[itemId]) {
-                clearTimeout(timersRef.current[itemId]);
-                delete timersRef.current[itemId];
-              }
-              const updated = await removeCartItem(address, itemId);
-              setCart(updated);
-            } catch (err) {
-              setCartError(err instanceof Error ? err.message : "Failed to remove item.");
-              void refreshCart();
+        if (!existing) return;
+
+        void (async () => {
+          try {
+            if (timersRef.current[existing.itemId]) {
+              clearTimeout(timersRef.current[existing.itemId]);
+              delete timersRef.current[existing.itemId];
             }
-          })();
-        }
+            const updated = await removeCartItem(address, existing.itemId);
+            setCart(updated);
+          } catch (err) {
+            setCartError(err instanceof Error ? err.message : "Failed to remove item.");
+            void refreshCart();
+          }
+        })();
         return;
       }
 
@@ -108,31 +151,32 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      const { itemId } = existing;
-
-      // Optimistic UI update.
       setCart((prev) => ({
         ...prev,
-        groups: prev.groups.map((g) => ({
-          ...g,
-          items: g.items.map((it) =>
-            it.id === itemId ? { ...it, quantity: String(nextQty) } : it,
+        groups: prev.groups.map((group) => ({
+          ...group,
+          items: group.items.map((item) =>
+            item.id === existing.itemId ? { ...item, quantity: String(nextQty) } : item,
           ),
         })),
       }));
 
-      // Debounced backend update.
-      if (timersRef.current[itemId]) clearTimeout(timersRef.current[itemId]);
-      timersRef.current[itemId] = setTimeout(() => {
+      if (timersRef.current[existing.itemId]) {
+        clearTimeout(timersRef.current[existing.itemId]);
+      }
+
+      timersRef.current[existing.itemId] = setTimeout(() => {
         void (async () => {
           try {
-            const updated = await updateCartItemQuantity(address, itemId, nextQty);
+            const updated = await updateCartItemQuantity(address, existing.itemId, nextQty);
             setCart(updated);
           } catch (err) {
-            setCartError(err instanceof Error ? err.message : "Failed to update cart item.");
+            setCartError(
+              err instanceof Error ? err.message : "Failed to update cart item.",
+            );
             void refreshCart();
           } finally {
-            delete timersRef.current[itemId];
+            delete timersRef.current[existing.itemId];
           }
         })();
       }, 500);
@@ -159,20 +203,45 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     setCart(updated);
   }, [address]);
 
-  const ctx: CartContextType = {
-    cart,
-    cartLoading,
-    cartError,
-    drawerOpen,
-    setDrawerOpen,
-    itemCount,
-    refreshCart,
-    setQuantityForProduct,
-    removeCartItem: removeCartItemFn,
-    clearCart: clearCartFn,
-  };
+  const stateValue = useMemo<CartStateSlice>(
+    () => ({
+      cart,
+      cartLoading,
+      cartError,
+      drawerOpen,
+      itemCount,
+    }),
+    [cart, cartLoading, cartError, drawerOpen, itemCount],
+  );
 
-  return <CartContext.Provider value={ctx}>{children}</CartContext.Provider>;
+  const actionsValue = useMemo<CartActionsSlice>(
+    () => ({
+      setDrawerOpen,
+      refreshCart,
+      setQuantityForProduct,
+      removeCartItem: removeCartItemFn,
+      clearCart: clearCartFn,
+    }),
+    [refreshCart, setQuantityForProduct, removeCartItemFn, clearCartFn],
+  );
+
+  const contextValue = useMemo<CartContextType>(
+    () => ({
+      ...stateValue,
+      ...actionsValue,
+    }),
+    [stateValue, actionsValue],
+  );
+
+  useContextDebug("cart-state", stateValue);
+
+  return (
+    <CartActionsContext.Provider value={actionsValue}>
+      <CartStateContext.Provider value={stateValue}>
+        <CartContext.Provider value={contextValue}>{children}</CartContext.Provider>
+      </CartStateContext.Provider>
+    </CartActionsContext.Provider>
+  );
 }
 
 export function useCart() {
@@ -181,3 +250,19 @@ export function useCart() {
   return ctx;
 }
 
+export function useCartState() {
+  const ctx = useContext(CartStateContext);
+  if (!ctx) throw new Error("useCartState must be used within CartProvider");
+  return ctx;
+}
+
+export function useCartActions() {
+  const ctx = useContext(CartActionsContext);
+  if (!ctx) throw new Error("useCartActions must be used within CartProvider");
+  return ctx;
+}
+
+export function useCartSelector<T>(selector: (state: CartStateSlice) => T): T {
+  const state = useCartState();
+  return selector(state);
+}

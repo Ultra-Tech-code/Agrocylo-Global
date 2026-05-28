@@ -1,9 +1,17 @@
 "use client";
 
-import React, { createContext, useCallback, useEffect, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useContext,
+} from "react";
 import type { WalletContextType } from "../types/wallet";
 import { getXlmBalance } from "../lib/stellar";
 import { signAndSubmitTransaction } from "../lib/signTransaction";
+import { useContextDebug } from "@/hooks/useContextDebug";
 import type { SignAndSubmitResult } from "../lib/signTransaction";
 import {
   WALLET_ADAPTERS,
@@ -29,6 +37,23 @@ const initialState: WalletContextType = {
 };
 
 export const WalletContext = createContext<WalletContextType>(initialState);
+type WalletState = Pick<
+  WalletContextType,
+  | "address"
+  | "balance"
+  | "connected"
+  | "loading"
+  | "error"
+  | "network"
+  | "activeWalletId"
+>;
+type WalletActions = Pick<
+  WalletContextType,
+  "connect" | "disconnect" | "refreshBalance" | "signAndSubmit"
+>;
+
+const WalletStateContext = createContext<WalletState | null>(null);
+const WalletActionsContext = createContext<WalletActions | null>(null);
 
 export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -87,7 +112,7 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({
     })();
   }, []);
 
-  const refreshBalance = async (addr?: string) => {
+  const refreshBalance = useCallback(async (addr?: string) => {
     try {
       const a = addr ?? address;
       if (!a) return;
@@ -98,9 +123,9 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({
       console.error("Failed to fetch balance:", errorMsg);
       setError(errorMsg);
     }
-  };
+  }, [address]);
 
-  const connect = async (adapterId?: string) => {
+  const connect = useCallback(async (adapterId?: string) => {
     setLoading(true);
     setError(null);
 
@@ -161,9 +186,9 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({
     } finally {
       setLoading(false);
     }
-  };
+  }, [refreshBalance]);
 
-  const disconnect = () => {
+  const disconnect = useCallback(() => {
     setAddress(null);
     setBalance(null);
     setConnected(false);
@@ -173,7 +198,7 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({
     localStorage.removeItem("walletAddress");
     localStorage.removeItem("walletNetwork");
     localStorage.removeItem("activeWalletId");
-  };
+  }, []);
 
   const signAndSubmit = useCallback(
     async (transactionXdr: string): Promise<SignAndSubmitResult> => {
@@ -193,26 +218,64 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({
         return { success: false, error: msg };
       }
     },
-    [connected, address],
+    [connected, address, refreshBalance],
   );
 
+  const stateValue = useMemo<WalletState>(
+    () => ({
+      address,
+      balance,
+      connected,
+      loading,
+      error,
+      network,
+      activeWalletId,
+    }),
+    [address, balance, connected, loading, error, network, activeWalletId],
+  );
+
+  const actionsValue = useMemo<WalletActions>(
+    () => ({
+      connect,
+      disconnect,
+      refreshBalance: async () => refreshBalance(),
+      signAndSubmit,
+    }),
+    [connect, disconnect, signAndSubmit, refreshBalance],
+  );
+
+  const legacyValue = useMemo<WalletContextType>(
+    () => ({
+      ...stateValue,
+      ...actionsValue,
+    }),
+    [stateValue, actionsValue],
+  );
+
+  useContextDebug("wallet-state", stateValue);
+
   return (
-    <WalletContext.Provider
-      value={{
-        address,
-        balance,
-        connected,
-        loading,
-        error,
-        network,
-        activeWalletId,
-        connect,
-        disconnect,
-        refreshBalance: async () => refreshBalance(),
-        signAndSubmit,
-      }}
-    >
-      {children}
-    </WalletContext.Provider>
+    <WalletActionsContext.Provider value={actionsValue}>
+      <WalletStateContext.Provider value={stateValue}>
+        <WalletContext.Provider value={legacyValue}>{children}</WalletContext.Provider>
+      </WalletStateContext.Provider>
+    </WalletActionsContext.Provider>
   );
 };
+
+export function useWalletState() {
+  const ctx = useContext(WalletStateContext);
+  if (!ctx) throw new Error("useWalletState must be used within WalletProvider");
+  return ctx;
+}
+
+export function useWalletActions() {
+  const ctx = useContext(WalletActionsContext);
+  if (!ctx) throw new Error("useWalletActions must be used within WalletProvider");
+  return ctx;
+}
+
+export function useWalletSelector<T>(selector: (state: WalletState) => T): T {
+  const state = useWalletState();
+  return selector(state);
+}
